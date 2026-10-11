@@ -4,7 +4,7 @@
 
 名称 Issue Kanban Bridge、リポジトリ名候補 issue-kanban-bridge、バージョン0.1.0、MIT。
 ソースは許可したファイルだけを別ディレクトリへコピーしました。個人のIssue、スレッド履歴、クラウド設定、認証情報、Gitの既存履歴は配布対象に含めません。
-ローカルMCP、Claude登録、元セッションへの次回入力時の結果取得、定期実行Doneの実装を含みます。隔離したClaude登録MCP・Codex MCP・session hookの実プロセス往復を含む16件の自動テストが成功しました。検査済みZIPは32ファイルで、個人識別子・Site接続情報・秘密鍵形式のスキャンも通過しました。実際のClaudeアプリやCodexのホスト内インストール/UI確認は未実施です。
+ローカルMCP、Claude登録、元セッションへの次回入力時の結果取得、登録後に完了を待つ見張り（watchCommand）、定期実行Doneの実装を含みます。隔離したClaude登録MCP・Codex MCP・session hookの実プロセス往復を含む16件の自動テストが成功しました。検査済みZIPは32ファイルで、個人識別子・Site接続情報・秘密鍵形式のスキャンも通過しました。実際のClaudeアプリやCodexのホスト内インストール/UI確認は未実施です。
 
 GitHub配布先は sakerice/issue-kanban-bridge です。この新規リポジトリにはこの配布用ソースだけをpushします。個人用リポジトリやその履歴をpublicへ変更しません。OpenAIディレクトリのverified publisherは未設定です。
 

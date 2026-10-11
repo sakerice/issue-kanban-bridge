@@ -11,6 +11,7 @@ CodexとClaude Codeが同じローカルIssue Kanbanを使うMITライセンス�
 - 定期実行ログはReview/Releaseを使わず、結果記録後InProgress → Done。Doneは7日後にClosedへ保存され検索できます。
 - Claude Codeから依頼本文をToDoへ直接登録。登録だけではエージェントを起動しません。
 - Codexのkanban_complete_claudeで結果を保存しDoneへ。元のClaudeセッションの次の入力・再開時に完了報告を取得します。即時通知やセッションの自動起動はありません。
+- 登録結果の `watchCommand` をClaude Codeが背景で実行しておくと、Doneになった時点で依頼元セッションが起き、利用者の入力を待たずに結果の確認へ進めます。
 
 ## 対応範囲
 
@@ -57,6 +58,17 @@ codex plugin add issue-kanban-bridge@issue-kanban-bridge
 - `hooks`をClaude Codeのsettings.jsonへ既存hookを保持して追加します。
 - PreToolUseが実際のsession_idを登録入力へ設定します。SessionStart/UserPromptSubmitがその元セッションだけの完了報告を取得します。
 - CodexとClaudeを同じOSユーザーで実行し、同じ保存先を使用してください。
+
+### 完了を待つ見張り
+
+`issue_kanban_submit` の結果には `watchCommand` が入ります（このPCのNode.jsと `claude/watch.js` の場所、IssueのIDから実行時に組み立てるもので、リポジトリには含まれません）。Claude CodeがBashの背景実行で走らせると、IssueがDone（キャンセル時はClosed）になった時点で1行出して終わり、その終了通知で依頼元セッションが作業を再開します。
+
+- ボードファイルを読むだけで、書き込み・ロック・自動アーカイブはしません。待っている間にモデルは動かないため、トークンを消費しません。
+- 既定は60秒ごとに読み、24時間で打ち切ります。`node claude/watch.js <IssueのIDまたは番号> [間隔秒] [上限時間]` で変えられます。
+- 終了時の出力は `KANBAN_DONE` / `KANBAN_CLOSED` / `KANBAN_MISSING` / `KANBAN_ERROR` / `KANBAN_TIMEOUT` のいずれかです。
+- 見張りはClaude Codeのセッションが開いている間だけ有効です。閉じていた場合は従来どおり、次の入力・再開時にhookが完了報告を渡します。
+- `ISSUE_KANBAN_DATA` で保存先を変えている場合は、その指定も `watchCommand` に含まれます。
+- Doneはリリース・マージの承認ではありません。
 
 Claudeへの依頼例：「Issue Kanbanへこの依頼を登録して。本文に成果物と完了条件を記録し、再送用sourceIdを固定して。これは登録だけで、エージェントへの依頼送信は別途行う。」
 

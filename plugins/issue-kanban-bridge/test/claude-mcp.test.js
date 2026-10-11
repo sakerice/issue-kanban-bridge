@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 test('real Claude MCP, Codex MCP and session hook share a temporary board; retries and other sessions do not duplicate reports', async()=>{
@@ -22,6 +22,12 @@ test('real Claude MCP, Codex MCP and session hook share a temporary board; retri
   await codex.connect(new StdioClientTransport({command:process.execPath,args:[join(root,'src/server.js'),'--stdio'],env,stderr:'pipe'}));
   const input=hook({hook_event_name:'PreToolUse',tool_name:'mcp__issue-kanban-inbox__issue_kanban_submit',session_id:origin,tool_input:{title:'Synthetic request',description:'Synthetic completion test',sourceId:'e2e-stable',sourceSessionId:'22222222-2222-4222-8222-222222222222'}}).hookSpecificOutput.updatedInput;
   const receipt=await claude.callTool({name:'issue_kanban_submit',arguments:input});assert.equal(receipt.isError,undefined);assert.equal(receipt.structuredContent.status,'registered');
+  assert.match(receipt.structuredContent.watchCommand,/claude\/watch\.js' '[0-9a-f-]{36}'$/);
+  // The background watcher must find the same board without inheriting the server's environment.
+  const {ISSUE_KANBAN_DATA:_,...plainEnv}=env;
+  const watcher=spawn('/bin/sh',['-c',`${receipt.structuredContent.watchCommand} 1`],{env:plainEnv});
+  let watched='';watcher.stdout.on('data',d=>watched+=d);
+  const watcherExit=new Promise(resolve=>watcher.on('exit',resolve));
   const duplicate=await claude.callTool({name:'issue_kanban_submit',arguments:input});assert.equal(duplicate.structuredContent.issueId,receipt.structuredContent.issueId);
   const board=await codex.callTool({name:'kanban_board',arguments:{}});assert.equal(board.structuredContent.board.issues.length,1);
   let issue=board.structuredContent.board.issues[0];assert.equal(issue.registration.sourceSessionId,origin);
@@ -29,6 +35,7 @@ test('real Claude MCP, Codex MCP and session hook share a temporary board; retri
   issue=moved.structuredContent.board.issues[0];
   const done=await codex.callTool({name:'kanban_complete_claude',arguments:{id:issue.id,expectedVersion:issue.version,reportId:'e2e-report',text:'Synthetic finished result',sourceRef:'test:e2e-result',links:[]}});
   assert.equal(done.isError,undefined);assert.equal(done.structuredContent.board.issues[0].status,'Done');
+  assert.equal(await watcherExit,0);assert.match(watched,/^KANBAN_DONE [0-9a-f-]{36} Synthetic request/);
   assert.deepEqual(hook({hook_event_name:'UserPromptSubmit',session_id:'22222222-2222-4222-8222-222222222222'}),{});
   const delivered=hook({hook_event_name:'UserPromptSubmit',session_id:origin});assert.match(delivered.hookSpecificOutput.additionalContext,/Synthetic finished result/);
   assert.deepEqual(hook({hook_event_name:'UserPromptSubmit',session_id:origin}),{});
