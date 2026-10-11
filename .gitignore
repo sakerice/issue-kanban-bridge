@@ -1,0 +1,20 @@
+node_modules/
+.data/
+*.tmp
+*.lock
+.env*
+.DS_Store
+
+# Private runtime state and exports
+claude-inbox/
+delivered/
+board.json
+board.*.json
+*.receipt.json
+.openai/
+*.pem
+*.key
+*.p12
+*.pfx
+*.zip
+*.tar.gz

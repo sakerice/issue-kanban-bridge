@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "issue-kanban-bridge",
+  "version": "0.1.0",
+  "description": "Local issue Kanban with Claude Code registration and completion reports.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Issue Kanban Bridge",
+        "shortDescription": "Issues with Claude Code",
+        "longDescription": "Manage issues, priorities, agent assignments and execution logs. Claude Code registers requests and receives completion reports in the originating session. Local data stays on your computer.",
+        "defaultPrompt": [
+          "Open Issue Kanban.",
+          "Register this request in Issue Kanban."
+        ]
+      }
+    }
+  },
+  "repository": "https://github.com/sakerice/issue-kanban-bridge"
+}

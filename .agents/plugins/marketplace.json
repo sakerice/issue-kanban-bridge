@@ -1,0 +1,20 @@
+{
+  "name": "issue-kanban-bridge",
+  "plugins": [
+    {
+      "name": "issue-kanban-bridge",
+      "source": {
+        "source": "local",
+        "path": "./plugins/issue-kanban-bridge"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ],
+  "interface": {
+    "displayName": "Issue Kanban Bridge"
+  }
+}
