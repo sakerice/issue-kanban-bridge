@@ -21,7 +21,7 @@ async function requestReflection() {
       reflectionNotice = 'このスレッドへ反映依頼を送信しました。反映完了はチャットの報告とカードで確認できます。';
     } else {
       await navigator.clipboard.writeText(reflectionRequest);
-      reflectionNotice = '反映依頼文をコピーしました。反映したいDotsまたはスレッドのチャットへ貼り付けて送信してください。';
+      reflectionNotice = '反映依頼文をコピーしました。反映したいPM役（Dotまたは作業セッション）のチャットへ貼り付けて送信してください。';
     }
   } catch (e) { error = e.message || '反映依頼を送信できませんでした。'; }
   finally { busy = false; render(); }
@@ -29,7 +29,7 @@ async function requestReflection() {
 const decisionDrafts = new Map();
 const statuses = ['ToDo', 'Plan', 'InProgress', 'Review', 'Release', 'Done'];
 const colors = { ToDo: '#8798a6', Plan: '#d692be', InProgress: '#47b0df', Review: '#d8b968', Release: '#ba95fa', Done: '#7ac5a3' };
-const labels = { ToDo: '着手待ち', Plan: '段取り・設計を相談中', InProgress: 'Dotsが作業中', Review: 'あなたの確認待ち', Release: '本番反映待ち', Done: '完了 · 7日間保持' };
+const labels = { ToDo: '着手待ち', Plan: '段取り・設計を相談中', InProgress: '作業中', Review: 'あなたの確認待ち', Release: '本番反映待ち', Done: '完了 · 7日間保持' };
 function el(tag, text, cls) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node; }
 function button(text, fn, cls = '') { const b = el('button', text, cls); b.type = 'button'; b.disabled = busy; b.onclick = fn; return b; }
 function time(at) { return new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
@@ -126,7 +126,7 @@ function detail(issue) {
   const form = el('form', undefined, 'decision-form'); form.onsubmit = event => event.preventDefault(); const reason = el('input'); reason.placeholder = '差し戻し理由／キャンセル理由（任意）'; reason.setAttribute('aria-label', reason.placeholder); reason.value = decisionDrafts.get(issue.id) || ''; reason.oninput = () => decisionDrafts.set(issue.id, reason.value); form.append(reason);
   if (issue.status === 'Review') form.append(button('差し戻してToDoへ', () => { if (!reason.value.trim()) { reason.focus(); return; } void decide(issue, 'ToDo', 'return', `差し戻し: ${reason.value}`); }));
   if (!['Done', 'Closed'].includes(issue.status)) form.append(button('キャンセル', () => { void decide(issue, 'Closed', 'cancel', `#${issue.number}をキャンセル${reason.value.trim() ? `: ${reason.value.trim()}` : ''}`); }, 'danger'));
-  if (issue.status === 'Release') dialog.append(el('p', 'Dotsによる本番反映と結果確認を待っています。', 'hint'));
+  if (issue.status === 'Release') dialog.append(el('p', 'PM役による本番反映と結果確認を待っています。', 'hint'));
   if (!['Done', 'Closed'].includes(issue.status)) dialog.append(actions, form);
   if (issue.closedReason) dialog.append(el('p', issue.closedReason === 'cancelled' ? 'キャンセル済み · 実作業の停止結果は履歴で確認してください' : 'Doneから7日経過でアーカイブ', 'hint'));
   dialog.append(el('h3', '成果物・リンク'));
@@ -135,7 +135,7 @@ function detail(issue) {
   dialog.append(el('h3', '作業と判断の履歴'));
   for (const event of [...issue.history].reverse()) {
     const entry = el('div', undefined, 'event'); entry.append(el('time', time(event.at)));
-    entry.append(el('p', event.type === 'progress' ? event.text : event.type === 'created' ? '依頼を受領 → ToDo' : event.type === 'assignment' ? `担当変更: ${event.from ? `${agentPlaces[event.from.environment]} · ${event.from.name}` : '未確認'} → ${agentPlaces[event.to.environment]} · ${event.to.name}` : `${event.from} → ${event.to}`));
+    entry.append(el('p', event.type === 'progress' ? event.text : event.type === 'created' ? '依頼を受領 → ToDo' : event.type === 'assignment' ? `担当変更: ${event.from ? `${agentPlaces[event.from.environment]} · ${event.from.name}` : '未確認'} → ${agentPlaces[event.to.environment]} · ${event.to.name}` : `${event.from} → ${event.to}${event.manager ? `（PM: ${agentPlaces[event.manager.environment] || '不明'} · ${event.manager.name}）` : ''}`));
     if (event.evidence) entry.append(el('blockquote', event.evidence.quote), el('small', event.evidence.sourceRef));
     if (event.sourceRef) entry.append(el('small', event.sourceRef));
     if (event.releaseResult) entry.append(el('small', `本番反映確認: ${event.releaseResult.sourceRef}`));
@@ -152,7 +152,7 @@ function detail(issue) {
 }
 function render() {
   root.replaceChildren();
-  const header = el('header'); header.append(el('div', 'YOUR DOT / SHARED WORKSPACE', 'eyebrow'), el('h1', 'Issue Kanban'), el('p', '依頼から確認、本番反映まで。同じボードで進める。', 'subtitle'));
+  const header = el('header'); header.append(el('div', 'SHARED WORKSPACE', 'eyebrow'), el('h1', 'Issue Kanban'), el('p', '依頼から確認、本番反映まで。同じボードで進める。', 'subtitle'));
   const tools = el('div', undefined, 'toolbar'); tools.append(el('span', '作業優先順  Release › InProgress › Plan › ToDo', 'priority'), button(busy ? '更新中…' : '更新', () => call('kanban_board', { query }))); header.append(tools); root.append(header);
   const reflection = el('div', undefined, 'reflection');
   reflection.append(button(app ? 'このスレッドをカンバンへ反映' : '反映依頼文をコピー', requestReflection), el('span', app ? '反映したいチャットの横パネルで押してください。このチャットへ依頼を送信します。' : 'コピーした依頼文を対象のチャットへ送信します。', 'hint'));
@@ -160,7 +160,7 @@ function render() {
   if (reflectionNotice) { const notice = el('p', reflectionNotice, 'sync'); notice.role = 'status'; root.append(notice); }
   if (error) { const alert = el('p', error, 'error'); alert.role = 'alert'; root.append(alert); }
   if (!board) { root.append(el('p', 'ボードへ接続しています…')); return; }
-  root.append(el('p', board.sync?.cloud ? 'カードは共有保存されます。Dotsの報告時に進捗を記録する運用です。' : 'ローカル確認用 · Dotsへの接続は別途必要です', 'sync'));
+  root.append(el('p', board.sync?.cloud ? 'カードは共有保存されます。PM役の報告時に進捗を記録する運用です。' : 'ローカル確認用 · PM役（Dotまたは作業セッション）の接続は別途必要です', 'sync'));
   if (board.sync?.cloud) {
     const backups = el('div', undefined, 'toolbar');
     if (app) {

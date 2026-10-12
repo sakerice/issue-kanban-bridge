@@ -15,36 +15,58 @@ export function createIssue({ id, title, kind = 'request', activityUrl, sourceId
   return { id, title: title.trim(), kind, activityUrl: activityUrl || null, sourceId: sourceId || null, status: 'ToDo', version: 1, createdAt: at, updatedAt: at, doneAt: null, closedReason: null, links: [], history: [{ type: 'created', at, status: 'ToDo' }] };
 }
 
+const ENVIRONMENTS = ['local', 'codex-cloud', 'dot', 'other'];
+// The PM role (selects, plans, assigns, advances and records work) is a role, not a product:
+// Dot, or one Codex / Claude Code session acting as both PM and worker. 'dot' is accepted as a
+// legacy alias of 'manager'; boards whose history already contains actor 'dot' stay readable.
+export const ACTORS = ['user', 'manager', 'dot', 'system'];
+export function normalizeActor(actor) {
+  if (!ACTORS.includes(actor)) throw new Error('Invalid actor');
+  return actor === 'dot' ? 'manager' : actor;
+}
+// Who is acting as PM, e.g. { environment: 'dot', name: 'Dot' } or { environment: 'local', name: 'Claude Code' }.
+export function validateManager(manager) {
+  if (!manager || !ENVIRONMENTS.includes(manager.environment) || typeof manager.name !== 'string' || !manager.name.trim()) throw new Error('PM役（manager）にはenvironmentとnameを指定してください');
+  return { environment: manager.environment, name: manager.name.trim() };
+}
+function managerFor(actor, manager) {
+  if (manager) return validateManager(manager);
+  // The legacy alias names the PM explicitly; keep that fact instead of losing it in normalization.
+  return actor === 'dot' ? { environment: 'dot', name: 'Dot' } : null;
+}
+
 // Evidence must be supplied by the host adapter from a real user message or UI action.
 // This module validates the workflow; it is not an authentication boundary.
-export function transition(issue, { to, actor, evidence, releaseResult, expectedVersion, assignee }, now = Date.now()) {
+export function transition(issue, { to, actor: requestedActor, manager: requestedManager, evidence, releaseResult, expectedVersion, assignee }, now = Date.now()) {
   if (expectedVersion !== issue.version) throw new Error('Version conflict');
-  if (!['user', 'dot', 'system'].includes(actor)) throw new Error('Invalid actor');
+  const actor = normalizeActor(requestedActor);
+  if (requestedManager && actor !== 'manager') throw new Error('managerはactorがmanager（PM役）のときだけ指定できます');
+  const manager = actor === 'manager' ? managerFor(requestedActor, requestedManager) : null;
   if (!STATUSES.includes(to)) throw new Error('Invalid status');
   const scheduledCompletion = issue.kind === 'scheduled-run' && ['InProgress', 'Review'].includes(issue.status) && to === 'Done';
   if (issue.kind === 'scheduled-run' && ['Review', 'Release'].includes(to)) throw new Error('定期実行ログはReview/Releaseを使いません。実行完了後はDoneへ移してください。');
   const cancel = to === 'Closed' && evidence?.intent === 'cancel' && actor !== 'system';
   if (!cancel && !scheduledCompletion && !NEXT[issue.status]?.includes(to)) throw new Error('Invalid transition');
   if (cancel && ['Done', 'Closed'].includes(issue.status)) throw new Error('Cannot cancel completed work');
-  if (scheduledCompletion && (actor !== 'dot' || !issue.history.some(h => h.type === 'progress' && h.text?.trim() && h.sourceRef))) throw new Error('定期実行の完了結果を先に記録してください（actorはdot）');
+  if (scheduledCompletion && (actor !== 'manager' || !issue.history.some(h => h.type === 'progress' && h.text?.trim() && h.sourceRef))) throw new Error('定期実行の完了結果を先に記録してください（actorはmanager）');
   const userDecision = cancel || (issue.status === 'Review' && !scheduledCompletion);
   if (userDecision) {
     const intent = cancel ? 'cancel' : { ToDo: 'return', Done: 'approve', Release: 'release' }[to];
     if (evidence?.intent !== intent || !evidence?.sourceRef || !evidence?.quote?.trim()) throw new Error('Explicit user decision required');
   }
-  if (['Plan', 'InProgress', 'Review'].includes(to) && actor !== 'dot') throw new Error('Dot advances work');
+  if (['Plan', 'InProgress', 'Review'].includes(to) && actor !== 'manager') throw new Error('Only the manager (PM role) advances work');
   if (assignee) issue = assignAgent(issue, assignee, now);
   if (['Plan', 'InProgress', 'Review', 'Release', 'Done'].includes(to)) requireAssignee(issue);
   if (to === 'Review') requireReviewLink(issue);
   if (issue.status === 'Release' && to === 'Done') {
-    if (actor !== 'dot' || releaseResult?.verified !== true || !releaseResult?.sourceRef) throw new Error('Verified production release required');
+    if (actor !== 'manager' || releaseResult?.verified !== true || !releaseResult?.sourceRef) throw new Error('Verified production release required');
   }
   if (issue.status === 'Done' && to === 'Closed') {
     if (actor !== 'system' || new Date(now).getTime() - new Date(issue.doneAt).getTime() < WEEK) throw new Error('Archive only after seven days in Done');
   }
   if (actor === 'system' && !(issue.status === 'Done' && to === 'Closed')) throw new Error('System can only archive');
   const at = iso(now);
-  return { ...issue, status: to, version: issue.version + 1, updatedAt: at, doneAt: to === 'Done' ? at : issue.doneAt, closedReason: to === 'Closed' ? (cancel ? 'cancelled' : 'aged-out') : null, history: [...issue.history, { type: 'transition', from: issue.status, to, actor, evidence: evidence || null, releaseResult: releaseResult || null, at }] };
+  return { ...issue, status: to, version: issue.version + 1, updatedAt: at, doneAt: to === 'Done' ? at : issue.doneAt, closedReason: to === 'Closed' ? (cancel ? 'cancelled' : 'aged-out') : null, history: [...issue.history, { type: 'transition', from: issue.status, to, actor, ...(manager ? { manager } : {}), evidence: evidence || null, releaseResult: releaseResult || null, at }] };
 }
 
 export function reportProgress(issue, { text, sourceRef, links = [], expectedVersion, assignee }, now = Date.now()) {
@@ -102,7 +124,7 @@ export function requireReviewLink(issue) {
 }
 
 export function validateAssignee(assignee) {
-  if (!assignee || !['local', 'codex-cloud', 'dot', 'other'].includes(assignee.environment) || !assignee.name?.trim() || !assignee.sourceRef?.trim()) throw new Error('担当エージェント名・実行場所・確認元を指定してください');
+  if (!assignee || !ENVIRONMENTS.includes(assignee.environment) || !assignee.name?.trim() || !assignee.sourceRef?.trim()) throw new Error('担当エージェント名・実行場所・確認元を指定してください');
   if (assignee.sessionUrl) {
     let url; try { url = new URL(assignee.sessionUrl); } catch { throw new Error('Invalid assignee session URL'); }
     if (!['https:', 'http:', 'codex:'].includes(url.protocol)) throw new Error('Invalid assignee session URL');

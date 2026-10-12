@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createIssue, transition, reportProgress, reorderTodo, workQueue, closedIssues, numberIssues, matchesIssue, requireAssignee } from './workflow.js';
+import { createIssue, transition, reportProgress, reorderTodo, workQueue, closedIssues, numberIssues, matchesIssue, requireAssignee, validateManager } from './workflow.js';
 
 // Each writer refreshes, locks and rejects stale disk revisions; no silent overwrite.
 export class BoardStore {
@@ -95,11 +95,12 @@ export class BoardStore {
       const now = this.clock();
       const progressed = reportProgress(issue, { expectedVersion: args.expectedVersion, text: args.text, sourceRef: args.sourceRef, links: args.links || [], assignee: args.assignee }, now);
       requireAssignee(progressed);
+      const manager = args.manager ? validateManager(args.manager) : null;
       const at = new Date(now).toISOString();
       // This exception is specific to registered Claude requests. It authorizes no release.
       return { ...progressed, status: 'Done', doneAt: at, version: progressed.version + 1,
         completion: { reportId: args.reportId, text: args.text, sourceRef: args.sourceRef, links: args.links || [], sourceSessionId: issue.registration.sourceSessionId, at },
-        history: [...progressed.history, { type: 'transition', from: issue.status, to: 'Done', actor: 'dot', at, reason: 'Claude Code caller reviews result; no release authorization', reportId: args.reportId }] };
+        history: [...progressed.history, { type: 'transition', from: issue.status, to: 'Done', actor: 'manager', ...(manager ? { manager } : {}), at, reason: 'Claude Code caller reviews result; no release authorization', reportId: args.reportId }] };
     });
   }
   move(args) { return this.update(args.id, issue => { if (args.to === 'Done' && issue.sourceId?.startsWith('claude-code:') && issue.registration?.sourceSessionId) throw new Error('Use kanban_complete_claude to save the origin-session report before Done'); return transition(issue, args, this.clock()); }); }
