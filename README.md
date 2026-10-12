@@ -10,7 +10,7 @@ CodexとClaude Codeが同じローカルIssue Kanbanを使うMITライセンス�
 - Releaseは明示的な指示が必要です。プラグイン自身がGitHub操作や本番反映を実行することはありません。
 - 定期実行ログはReview/Releaseを使わず、結果記録後InProgress → Done。Doneは7日後にClosedへ保存され検索できます。
 - Claude Codeから依頼本文をToDoへ直接登録。登録だけではエージェントを起動しません。
-- Codexのkanban_complete_claudeで結果を保存しDoneへ。元のClaudeセッションの次の入力・再開時に完了報告を取得します。即時通知やセッションの自動起動はありません。
+- PM役（Codexなど）のkanban_complete_claudeで結果を保存しDoneへ。元のClaudeセッションの次の入力・再開時に完了報告を取得します。即時通知やセッションの自動起動はありません。
 - 登録結果の `watchCommand` をClaude Codeが背景で実行しておくと、Doneになった時点で依頼元セッションが起き、利用者の入力を待たずに結果の確認へ進めます。
 
 ## 対応範囲
@@ -18,6 +18,48 @@ CodexとClaude Codeが同じローカルIssue Kanbanを使うMITライセンス�
 Node.js 22以上とローカルMCPに対応したCodex/Claude Codeが必要です。MCP Appsの画面表示・会話パネル配置はホストの対応に依存します。ブラウザからの利用も可能です。
 
 この配布候補はローカル版です。クラウド上のYour dotやWeb版から利用者のPCのstdioサーバーへ接続することはできません。同等のクラウド対応には利用者別の認証・保存領域を持つサーバーが別途必要です。既存の個人用クラウドボードへ接続しません。
+
+## PM役と2つの運用形態
+
+作業の選択・計画・担当割り当て・進行・完了記録を行う役を「PM役」と呼びます。PM役は製品名ではなく役割で、ボードには `actor: "manager"` として記録されます。誰がPM役だったかは `kanban_transition` / `kanban_complete_claude` の `manager: { environment, name }` で履歴に残せます（任意）。実際に作業するエージェントは従来どおり `assignee` に記録します。
+
+### 形態1: DotがPM役
+
+DotがボードをIssueの記録として使い、`kanban_next` で次の作業を選び、計画・担当割り当て（ローカルのCodexなど）・進行を記録します。`assignee` には実際の作業者、`manager` には `{ "environment": "dot", "name": "Dot" }` を書きます。
+
+注意: このリポジトリはローカル版です。ボードのMCPサーバーは同じPC上のstdioかlocalhostからしか届きません。クラウドで動くDotから使うには、ボードがDotから届く場所（利用者別の認証と保存領域を持つサーバー）にある必要があり、それはこのリポジトリの範囲外です。実際のDotからの接続は検証していません。
+
+### 形態2: 1つのセッションがPM役と作業者を兼ねる
+
+CodexまたはClaude Codeの1セッションが `kanban_next` で1件取り、自分を `assignee`（environment・name・sourceRef）と `manager` の両方に記録して着手し、作業・`kanban_progress`・Reviewまで進めます。Doneにするのはユーザーの承認です。
+
+Codexではプラグインを有効にすればボードのツールが使えます。Claude Codeでボードのツール（`kanban_next` など）を使うには、本体のMCPサーバー `src/server.js --stdio` を登録します。
+
+```sh
+cd plugins/issue-kanban-bridge
+node scripts/claude-config.js --with-board
+```
+
+出力の `mcpServers` に `issue-kanban`（本体）と `issue-kanban-inbox`（登録窓口）が入るので、Claude CodeのMCP設定へ既存項目を保持して追加してください。コマンドで登録する場合は次のとおりです（パスは取得したリポジトリの絶対パスに置き換えます）。
+
+```sh
+claude mcp add --scope user issue-kanban -- node /absolute/path/to/issue-kanban-bridge/plugins/issue-kanban-bridge/src/server.js --stdio
+```
+
+運用ルールはスキル `skills/issue-kanban-bridge/SKILL.md` に書かれています。Claude Codeでは `kanban_guide` ツールで同じ内容を読めます。
+
+### どちらの形態でも変わらないルール
+
+- Review → Doneはユーザーの明示的な承認が必要です。PM役が自分の成果を承認することはできません。
+- Releaseはユーザーの明示的な指示が必要です。プラグインは本番反映を実行しません。
+- ToDoの並べ替えはユーザーだけが行います。
+- 同じIssueを複数のエージェントで取りません。このバージョンにはロック（worker lease）がないため、`assignee` を確認して他が担当中のIssueには着手しないでください。
+
+### 後方互換
+
+- `actor: "dot"` は `manager` の別名として受け付けます。新しい履歴には `actor: "manager"` と `manager: { "environment": "dot", "name": "Dot" }` が残ります。既存のboard.jsonにある `actor: "dot"` の履歴はそのまま読めます。
+- 環境変数は `ISSUE_KANBAN_DATA` / `ISSUE_KANBAN_TOKEN` / `ISSUE_KANBAN_HOST` が正式で、`DOTS_KANBAN_*` は未設定時の代わりとして引き続き読みます。
+- 画面リソースのURI `ui://dots-kanban/board.html` は、ホストが出力テンプレートとして保持している既存インストールを壊さないよう変更していません。
 
 ## ソースから利用
 
@@ -82,7 +124,7 @@ Codexへの依頼例：「#12を対応し、Claude由来ならkanban_complete_cl
 
 複数プロセスの更新は排他と版番号で保護します。競合時は最新ボードを読み直して再試行してください。プロセス異常終了で `.lock` が残った場合は、対象ボードの全サーバーが停止したことを確認してからロックだけを削除します。
 
-ブラウザ単独表示は `npm start` でlocalhost:8798を開きます。外部アクセスは推奨しません。認証付きの外部ホスト設定でも利用者別の分離は行われないため、共用サービスとして提供しないでください。
+ブラウザ単独表示は `npm start` でlocalhost:8798を開きます（`PORT` で変更可）。外部アクセスは推奨しません。127.0.0.1以外で待ち受ける（`ISSUE_KANBAN_HOST`）場合は `ISSUE_KANBAN_TOKEN` が必須です。認証付きの外部ホスト設定でも利用者別の分離は行われないため、共用サービスとして提供しないでください。
 
 ## 公開状態
 

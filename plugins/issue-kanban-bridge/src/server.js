@@ -1,4 +1,4 @@
-import { dataPath } from './paths.js';
+import { dataPath, httpConfig } from './paths.js';
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -13,11 +13,14 @@ import { BoardStore } from './store.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const store = new BoardStore(dataPath);
+// The resource URI keeps its original name: hosts may have cached it as the output template
+// of kanban_board/kanban_panel, and renaming it would break existing installations for no gain.
 const uri = 'ui://dots-kanban/board.html';
 const html = readFileSync(join(root, 'public/board.html'), 'utf8');
 const version = z.number().int().positive();
 const evidence = z.object({ intent: z.enum(['approve', 'return', 'release', 'cancel']), sourceRef: z.string().min(1), quote: z.string().min(1) });
 const assignee = z.object({ environment: z.enum(['local', 'codex-cloud', 'dot', 'other']), name: z.string().trim().min(1).max(200), sourceRef: z.string().trim().min(1).max(2000), sessionUrl: z.string().url().optional() });
+const manager = z.object({ environment: z.enum(['local', 'codex-cloud', 'dot', 'other']), name: z.string().trim().min(1).max(200) });
 const link = z.object({ url: z.string().url(), label: z.string() });
 const ui = { ui: { resourceUri: uri }, 'openai/ui': { entrypoints: [{ type: 'global' }, { type: 'thread' }] } };
 
@@ -36,22 +39,19 @@ export function createMcpServer() {
   tool('kanban_board', 'Open the shared board and search Closed history. Imported Activity coverage is unverified. Read includes automatic archival of Done after seven days.', { query: z.string().optional() }, () => undefined);
   tool('kanban_panel', 'Open the issue board in the current chat panel.', { query: z.string().optional() }, () => undefined);
   tool('kanban_guide', 'Read the board workflow rules.', {}, () => ({ guide: readFileSync(join(root, 'skills/issue-kanban-bridge/SKILL.md'), 'utf8') }));
-  tool('kanban_complete_claude', 'Save the completed result for the originating Claude Code session and move to Done. Does not release or deploy.', { id: z.string(), expectedVersion: version, reportId: z.string().min(1), text: z.string().min(1), sourceRef: z.string().min(1), links: z.array(link).default([]), assignee: assignee.optional() }, args => store.completeClaude(args));
+  tool('kanban_complete_claude', 'Save the completed result for the originating Claude Code session and move to Done. Does not release or deploy.', { id: z.string(), expectedVersion: version, reportId: z.string().min(1), text: z.string().min(1), sourceRef: z.string().min(1), links: z.array(link).default([]), assignee: assignee.optional(), manager: manager.optional() }, args => store.completeClaude(args));
   tool('kanban_create', 'Register one actual user request or one scheduled execution as ToDo. Use a unique sourceId for each issue or schedule run to prevent duplicate creation. Include the actual Activity URL when available.', { title: z.string().min(1), kind: z.enum(['request', 'scheduled-run']).default('request'), sourceId: z.string().min(1), activityUrl: z.string().url().optional() }, args => store.create(args));
   tool('kanban_progress', 'Record the progress reported in chat on the corresponding issue, with source message reference and output links. Does not change status.', { id: z.string(), expectedVersion: version, text: z.string().min(1), sourceRef: z.string().min(1), links: z.array(link).default([]), assignee: assignee.optional() }, args => store.progress(args));
-  tool('kanban_transition', 'Advance ToDo→Plan→InProgress→Review (simple requests may skip Plan) as dot. Scheduled-run logs never enter Review or Release: save the execution result then advance InProgress→Done as dot without user approval. Plan and subsequent statuses require a verified assignee (environment local/codex-cloud/dot/other, agent name and sourceRef; sessionUrl when available). Specify assignee on transition or progress, record handoffs and never guess. Entering Review requires at least one genuine Activity or artifact URL already saved on the card (activityUrl or links); otherwise the server rejects the transition. Never invent URLs. Review→Done/ToDo/Release and cancellation require the actual explicit user decision with source reference and quote; distinguish casual comment OK from completion approval in context. Release→Done requires verified production result. This tool records status and never executes a deployment or stops an agent.', { id: z.string(), expectedVersion: version, to: z.enum(['ToDo', 'Plan', 'InProgress', 'Review', 'Release', 'Done', 'Closed']), actor: z.enum(['user', 'dot']), evidence: evidence.optional(), assignee: assignee.optional(), releaseResult: z.object({ verified: z.boolean(), sourceRef: z.string().min(1) }).optional() }, args => store.move(args));
-  tool('kanban_reorder_todo', 'Apply the user chosen order of all request ToDo IDs. Dots must not reprioritize independently. Board revision is required to reject stale reorder actions.', { ids: z.array(z.string()), expectedRevision: z.number().int().nonnegative() }, args => store.reorder(args));
-  tool('kanban_next', 'Return eligible request work in Release > InProgress > Plan > user ordered ToDo priority. Review waits for user. Selecting work does not launch it.', {}, () => ({ queue: store.board().queue }));
+  tool('kanban_transition', 'Advance ToDo→Plan→InProgress→Review (simple requests may skip Plan) as actor manager, the PM role. The PM role selects, plans, assigns and advances work; it can be Dot, or one Codex / Claude Code session that is both PM and worker. Pass manager {environment, name} to record who acts as PM (e.g. dot/Dot, local/Claude Code, local/Codex). actor dot is a legacy alias of manager. Scheduled-run logs never enter Review or Release: save the execution result then advance InProgress→Done as manager without user approval. Plan and subsequent statuses require a verified assignee (environment local/codex-cloud/dot/other, agent name and sourceRef; sessionUrl when available); a session acting as both PM and worker records itself as assignee. Specify assignee on transition or progress, record handoffs and never guess. Entering Review requires at least one genuine Activity or artifact URL already saved on the card (activityUrl or links); otherwise the server rejects the transition. Never invent URLs. Review→Done/ToDo/Release and cancellation require the actual explicit user decision with source reference and quote; distinguish casual comment OK from completion approval in context. Release→Done requires verified production result. This tool records status and never executes a deployment or stops an agent.', { id: z.string(), expectedVersion: version, to: z.enum(['ToDo', 'Plan', 'InProgress', 'Review', 'Release', 'Done', 'Closed']), actor: z.enum(['user', 'manager', 'dot']), manager: manager.optional(), evidence: evidence.optional(), assignee: assignee.optional(), releaseResult: z.object({ verified: z.boolean(), sourceRef: z.string().min(1) }).optional() }, args => store.move(args));
+  tool('kanban_reorder_todo', 'Apply the user chosen order of all request ToDo IDs. The PM role (Dot or a working session) must not reprioritize independently. Board revision is required to reject stale reorder actions.', { ids: z.array(z.string()), expectedRevision: z.number().int().nonnegative() }, args => store.reorder(args));
+  tool('kanban_next', 'Return eligible request work in Release > InProgress > Plan > user ordered ToDo priority. Review waits for user. Selecting work does not launch it. Called by the PM role (Dot or a session that is both PM and worker). Plan/InProgress/Release items may already belong to another agent: check assignee and never claim an issue another agent is working on.', {}, () => ({ queue: store.board().queue }));
   return server;
 }
 
 if (process.argv.includes('--stdio')) {
   await createMcpServer().connect(new StdioServerTransport());
 } else {
-  const token = process.env.DOTS_KANBAN_TOKEN;
-  const host = process.env.DOTS_KANBAN_HOST || '127.0.0.1';
-  const port = Number(process.env.PORT || 8798);
-  if (host !== '127.0.0.1' && !token) throw new Error('Remote access requires DOTS_KANBAN_TOKEN');
+  const { token, host, port } = httpConfig();
   const authorized = req => {
     if (!token) return true;
     const incoming = Buffer.from(req.headers.authorization || '');
