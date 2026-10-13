@@ -129,3 +129,9 @@ Codexへの依頼例：「#12を対応し、Claude由来ならkanban_complete_cl
 ## 公開状態
 
 GitHubでソースを配布します。OpenAIの公開ディレクトリ申請済み・承認済みを意味しません。[公開準備状況](docs/PUBLICATION-READINESS.md)を参照してください。
+
+## 開発のご相談
+
+このツールを使った開発や、カスタマイズのご相談はメールでお受けしています。
+
+- 連絡先: cwq06831@gmail.com（sakerice）
