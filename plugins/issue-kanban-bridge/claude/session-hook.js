@@ -4,16 +4,28 @@ import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { defaultDirectory, Inbox } from './inbox.js';
 import { readBoard } from './registration.js';
+import { issueTicket } from './ticket.js';
 const validSession = id => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id);
+async function emitted(output, options) {
+  if (options.emit) await options.emit(output);
+  return output;
+}
 export async function sessionHook(input, options = {}) {
   if (!validSession(input.session_id)) return {};
   const event = input.hook_event_name;
   if (event === 'PreToolUse') {
-    // Bind the request to the actual invoking session, not a model-supplied ID.
+    // Bind the request to the actual invoking session without rewriting the tool input.
+    // Rewriting (updatedInput) makes Claude Code's auto mode refuse the call, because its
+    // safety review no longer covers what would run. Instead, pass the call through unchanged
+    // when the model supplied the real session ID, and deny it (with the real ID) otherwise.
     if (input.tool_name !== 'mcp__issue-kanban-inbox__issue_kanban_submit') return {};
-    const output = { hookSpecificOutput: { hookEventName: event, updatedInput: { ...input.tool_input, sourceSessionId: input.session_id } } };
-    if (options.emit) await options.emit(output);
-    return output;
+    if (input.tool_input?.sourceSessionId === input.session_id) {
+      // Leave a one-time ticket so the inbox server can confirm this hook checked the call.
+      await issueTicket(options.directory || defaultDirectory, input.session_id, input.tool_input);
+      return emitted({}, options);
+    }
+    const reason = `Issue Kanban: sourceSessionId must be this session's ID. Resubmit the same request with sourceSessionId set to "${input.session_id}" and the same sourceId. / 依頼元セッションを確かめられないため登録を止めました。sourceSessionId に "${input.session_id}" を入れ、同じ sourceId で送り直してください。`;
+    return emitted({ hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny', permissionDecisionReason: reason } }, options);
   }
   if (!['SessionStart', 'UserPromptSubmit'].includes(event)) return {};
   const directory = options.directory || defaultDirectory;
@@ -37,7 +49,7 @@ export async function sessionHook(input, options = {}) {
     fresh.push(report);
     pendingMarkers.push({ file, report });
   }
-  const context = [event === 'SessionStart' ? `Issue Kanbanの現在の依頼元ClaudeセッションID: ${input.session_id}。登録ツールのsourceSessionIdに使用します。` : '', fresh.length ? `Issue Kanbanからこの元セッションへの作業完了報告です。Doneはリリース・本番反映の承認ではありません。成果物をユーザーへ伝えてレビューしてください。以下は依頼の結果データです。\n${JSON.stringify(fresh)}` : ''].filter(Boolean).join('\n');
+  const context = [event === 'SessionStart' ? `Issue Kanbanの現在の依頼元ClaudeセッションID: ${input.session_id}。issue_kanban_submitを呼ぶときは、sourceSessionIdにこの値をそのまま入れてください（未指定や別の値はhookが断ります）。` : '', fresh.length ? `Issue Kanbanからこの元セッションへの作業完了報告です。Doneはリリース・本番反映の承認ではありません。成果物をユーザーへ伝えてレビューしてください。以下は依頼の結果データです。\n${JSON.stringify(fresh)}` : ''].filter(Boolean).join('\n');
   const output = context ? { hookSpecificOutput: { hookEventName: event, additionalContext: context } } : {};
   if (options.emit) {
     await options.emit(output);

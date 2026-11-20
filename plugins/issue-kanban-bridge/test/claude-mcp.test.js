@@ -20,7 +20,14 @@ test('real Claude MCP, Codex MCP and session hook share a temporary board; retri
  try {
   await claude.connect(new StdioClientTransport({command:process.execPath,args:[join(root,'claude/server.js')],env,stderr:'pipe'}));
   await codex.connect(new StdioClientTransport({command:process.execPath,args:[join(root,'src/server.js'),'--stdio'],env,stderr:'pipe'}));
-  const input=hook({hook_event_name:'PreToolUse',tool_name:'mcp__issue-kanban-inbox__issue_kanban_submit',session_id:origin,tool_input:{title:'Synthetic request',description:'Synthetic completion test',sourceId:'e2e-stable',sourceSessionId:'22222222-2222-4222-8222-222222222222'}}).hookSpecificOutput.updatedInput;
+  const pre={hook_event_name:'PreToolUse',tool_name:'mcp__issue-kanban-inbox__issue_kanban_submit',session_id:origin};
+  const input={title:'Synthetic request',description:'Synthetic completion test',sourceId:'e2e-stable',sourceSessionId:origin};
+  // A foreign session ID is denied (not rewritten); the announced real ID passes through unchanged.
+  const denied=hook({...pre,tool_input:{...input,sourceSessionId:'22222222-2222-4222-8222-222222222222'}}).hookSpecificOutput;
+  assert.equal(denied.permissionDecision,'deny');assert.ok(denied.permissionDecisionReason.includes(origin));assert.equal(denied.updatedInput,undefined);
+  // Without the hook's confirmation the server refuses a sourceSessionId.
+  const unconfirmed=await claude.callTool({name:'issue_kanban_submit',arguments:input});assert.equal(unconfirmed.isError,true);assert.match(unconfirmed.content[0].text,/did not confirm/);
+  assert.deepEqual(hook({...pre,tool_input:input}),{});
   const receipt=await claude.callTool({name:'issue_kanban_submit',arguments:input});assert.equal(receipt.isError,undefined);assert.equal(receipt.structuredContent.status,'registered');
   assert.match(receipt.structuredContent.watchCommand,/claude\/watch\.js' '[0-9a-f-]{36}'$/);
   // The background watcher must find the same board without inheriting the server's environment.
@@ -28,6 +35,8 @@ test('real Claude MCP, Codex MCP and session hook share a temporary board; retri
   const watcher=spawn('/bin/sh',['-c',`${receipt.structuredContent.watchCommand} 1`],{env:plainEnv});
   let watched='';watcher.stdout.on('data',d=>watched+=d);
   const watcherExit=new Promise(resolve=>watcher.on('exit',resolve));
+  const replay=await claude.callTool({name:'issue_kanban_submit',arguments:input});assert.equal(replay.isError,true);
+  assert.deepEqual(hook({...pre,tool_input:input}),{});
   const duplicate=await claude.callTool({name:'issue_kanban_submit',arguments:input});assert.equal(duplicate.structuredContent.issueId,receipt.structuredContent.issueId);
   const board=await codex.callTool({name:'kanban_board',arguments:{}});assert.equal(board.structuredContent.board.issues.length,1);
   let issue=board.structuredContent.board.issues[0];assert.equal(issue.registration.sourceSessionId,origin);
@@ -39,5 +48,7 @@ test('real Claude MCP, Codex MCP and session hook share a temporary board; retri
   assert.deepEqual(hook({hook_event_name:'UserPromptSubmit',session_id:'22222222-2222-4222-8222-222222222222'}),{});
   const delivered=hook({hook_event_name:'UserPromptSubmit',session_id:origin});assert.match(delivered.hookSpecificOutput.additionalContext,/Synthetic finished result/);
   assert.deepEqual(hook({hook_event_name:'UserPromptSubmit',session_id:origin}),{});
+  // A request without sourceSessionId (no hook installed) is still accepted, without session routing.
+  const plain=await claude.callTool({name:'issue_kanban_submit',arguments:{title:'Plain request',description:'No origin session',sourceId:'e2e-plain'}});assert.equal(plain.isError,undefined);
  } finally {await claude.close();await codex.close();rmSync(dir,{recursive:true,force:true});}
 });
