@@ -98,7 +98,9 @@ codex plugin add issue-kanban-bridge@issue-kanban-bridge
 
 - `mcpServers`をClaude CodeのMCP設定へ既存項目を保持して追加します。
 - `hooks`をClaude Codeのsettings.jsonへ既存hookを保持して追加します。
-- PreToolUseが実際のsession_idを登録入力へ設定します。SessionStart/UserPromptSubmitがその元セッションだけの完了報告を取得します。
+- SessionStartが現在のClaudeセッションIDを知らせ、Claudeはそれを`issue_kanban_submit`の`sourceSessionId`に入れて送ります。PreToolUseは入力を書き換えず、実際のsession_idと一致するかだけを確かめ、未指定や別の値なら正しいIDを添えて登録を断ります（入力を書き換えるとClaude Codeのauto modeが呼び出しを止めるためです）。
+- PreToolUseは通すときに、そのセッションIDと依頼内容に結び付いた一度きりの確認票を受付フォルダ（`claude-inbox/tickets`、10分で失効）へ置きます。登録窓口は`sourceSessionId`付きの依頼を、対応する確認票を消費できたときだけ受け付けます。hookを通らなかった呼び出しや、hookが見た内容と違う呼び出しは断られます。hookを入れていない環境では`sourceSessionId`を省けば従来どおり登録できますが、完了報告はセッションへ戻りません。
+- SessionStart/UserPromptSubmitがその元セッションだけの完了報告を取得します。
 - CodexとClaudeを同じOSユーザーで実行し、同じ保存先を使用してください。
 
 ### 完了を待つ見張り
